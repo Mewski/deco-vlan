@@ -1,0 +1,54 @@
+[project]
+name = "deco-vlan"
+version = "0.2.0"
+description = "Put the IoT and guest Wi-Fi networks of a TP-Link Deco mesh on their own VLANs in access point mode"
+readme = "README.md"
+license = "Unlicense"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+dependencies = ["paramiko>=3.4", "rich>=13", "typer>=0.15"]
+
+[project.urls]
+Repository = "https://github.com/Mewski/deco-vlan"
+
+[project.scripts]
+deco-vlan = "deco_vlan.cli:main"
+
+[dependency-groups]
+dev = ["mypy>=1.13", "pytest>=8", "ruff>=0.8", "types-paramiko>=3.4"]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "ANN401",  # JSON from the Deco is typed Any
+    "COM812",  # the formatter decides about trailing commas
+    "CPY",     # no copyright notices: the code is in the public domain
+    "D1",      # a docstring where it says something, not on everything
+    "D203",    # no blank line before a class docstring
+    "D213",    # a docstring summary starts on the first line
+    "EM",      # exception messages are written where they are raised
+    "FBT",     # boolean options are plain keyword arguments
+    "PERF203", # retrying is a loop around a try
+    "S108",    # the /tmp paths are on the Deco, where /tmp is root's
+    "TRY003",  # messages are for the person at the terminal
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ANN", "ARG001", "INP001", "PLR2004", "S101", "S603", "S607"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.mypy]
+strict = true
+files = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
