@@ -172,20 +172,26 @@ Every unit has exactly one uplink per network. This is the loop protection. The 
 are plain Linux bridges without `hyfi_bridging`, so they must never have two paths to the same
 neighbour. With one uplink per unit the bridges of the mesh form a tree.
 
-A satellite on wireless backhaul uses the radio `hyctl` shows as `norelay` with `bcast enable`.
-When the mesh changes its uplink, deco-vlan moves the VLAN to the new radio, and it takes the
-old member out before it puts the new one in. In a test the 6 GHz link of a satellite was
-taken down, the mesh switched to 2.4 GHz, and the IoT VLAN followed within 3 seconds. The same
-happened on the way back.
+The uplink of a satellite is the link `hyctl` shows as `norelay` with `bcast enable`. On
+wireless backhaul that is a radio. When the mesh changes it, deco-vlan moves the VLAN to the
+new radio, and it takes the old member out before it puts the new one in. In a test the 6 GHz
+link of a satellite was taken down, the mesh switched to 2.4 GHz, and the IoT VLAN followed
+within 3 seconds. The same happened on the way back.
 
-A unit without such a radio is on a cable. The main unit always is, and a satellite is for as
-long as it is plugged in. Its uplink is the Ethernet port behind which the default gateway's
-MAC address was learned in `br-lan`. When the cable comes out and the satellite is back on a
-radio, the VLAN follows in the same way.
+On a cable it is an Ethernet port. The mesh software then lists that port as `norelay` with
+`bcast enable`, and it drops the radios towards the parent from the list.
 
-The firmware's mesh daemon picks one broadcast port among the parent-facing links, and its
-messages suggest that a cable can become such a link. If `hyctl` lists an Ethernet port as
-`norelay` with `bcast enable`, deco-vlan takes it as the uplink. No capture of that exists yet.
+    interfaces  iftype  type     grp_num  bcast
+    ath22.1     6g      relay    1        enable
+    eth1.4      eth     norelay  0        enable
+    eth1.3      eth     relay    1        enable
+
+When a satellite was plugged into a switch, this showed 9 seconds after the link came up, and
+deco-vlan moved both VLANs to the port within the same second.
+
+The main unit has no such link, because it has no parent. Its uplink is the Ethernet port
+behind which the default gateway's MAC address was learned in `br-lan`. Any unit without a
+marked uplink is treated this way.
 
 While no uplink is known, the members stay as they are. The radios stay in their bridges and
 the devices on them have no network until an uplink returns.

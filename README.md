@@ -17,20 +17,19 @@ This is alpha software that runs on one network, the author's.
 
 | Model | Hardware | Firmware | Backhaul |
 |---|---|---|---|
-| Deco BE63 | V2.6 | 1.3.5 Build 26071712 | Wi-Fi, one and two hops |
+| Deco BE63 | V2.6 | 1.3.5 Build 26071712 | Wi-Fi over one and two hops, and a cable to a switch |
 
 The installer refuses other models and firmware unless you tell it otherwise. Other
 Qualcomm-based Decos are built the same way and may need little or no change. The architecture
 notes list [what it relies on](docs/architecture.md#what-it-relies-on).
-
-A satellite on a cable is handled like the main Deco, which always is on one. That path has
-been exercised on a satellite, but not yet with a cable plugged in.
 
 ## Requirements
 
 - The Decos run in access point mode.
 - Every Deco on a cable is on a switch port that carries your LAN untagged and the new VLANs
   tagged. The main Deco always is on a cable.
+- Loop protection is switched off on those switch ports. That means spanning tree, BPDU guard
+  and loop detection.
 - Your router serves those VLANs.
 - You have the TP-Link ID that owns the Decos. It is the only credential, and nothing works
   without it.
@@ -96,6 +95,12 @@ is a radio such as `ath23`, or an Ethernet port such as `eth0.1`, which is port 
 
 The switch port has to carry the VLANs tagged. On a port that carries only the LAN, the main
 network works and the other two have no connection.
+
+A Deco bridges its cable and its Wi-Fi backhaul for a moment when it is plugged in, which is a
+loop. This is the stock firmware's behaviour, with or without `deco-vlan`. A managed switch
+that reacts to the loop can shut the port of the main Deco and take the whole mesh down with
+it. With loop protection off on the Decos' ports, the change took about ten seconds, and
+devices on other Decos lost their connection for that long.
 
 ### Guests
 

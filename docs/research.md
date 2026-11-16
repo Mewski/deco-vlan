@@ -230,27 +230,60 @@ Writing those objects back with `enable` set switched it on.
 
 ## Satellites on a cable
 
-A satellite that is plugged into the wired network uses the cable as its backhaul. No satellite
-of this mesh was on a cable, so the stock side was read from the firmware.
+A satellite that is plugged into the wired network uses the cable as its backhaul. The stock
+side was read from the firmware first.
 
 - `awnd` decides about the cable. Its messages speak of activating Ethernet backhaul and of
   disconnecting the other backhauls, or keeping them. It writes `{"status":1}` to
-  `/tmp/eth_runtime_info`, which reads `{"status":0}` on every unit here.
+  `/tmp/eth_runtime_info`, which reads `{"status":0}` on a unit on wireless backhaul.
 - `apsd` avoids loops in `br-lan`. Its messages speak of picking one broadcast port among the
   ports that do not relay. `/etc/apsd.json` names the Ethernet ports next to the backhaul
   radios.
-- `hyctl show` lists the four Ethernet ports as type `relay` on every unit, the main unit's
-  uplink port included. What it shows for a satellite on a cable is not known.
+- `hyctl show` lists the four Ethernet ports as type `relay` on a unit on wireless backhaul,
+  and on the main unit too, uplink port included.
 
-The watcher therefore does not depend on how the firmware marks a cable. A unit whose mesh
-software broadcasts over a radio towards its parent is on wireless backhaul. Any other unit
-uses the Ethernet port behind which the gateway is, which is what the main unit always did.
+The watcher was written so that it does not depend on how the firmware marks a cable. It takes
+the link `hyctl` marks as the broadcast uplink, whatever its kind. Without one it uses the
+Ethernet port behind which the gateway is, which is what the main unit always did.
 
-The Ethernet path was tried on a satellite without a cable. The watcher's code ran there with
-the gateway said to be behind `eth0.1`. It took the radio uplink out of both bridges, created
-both VLANs in the switch with port 1 and the CPU port as tagged members, and put `eth0.70` and
-`eth0.80` into the bridges, with only `eth0.80` not isolated. The real watcher then put
-everything back within a second, and it removed the VLANs from the switch. No radio moved.
+### Without a cable
+
+The Ethernet path was first tried on a satellite without a cable. The watcher's code ran there
+with the gateway said to be behind `eth0.1`. It took the radio uplink out of both bridges,
+created both VLANs in the switch with port 1 and the CPU port as tagged members, and put
+`eth0.70` and `eth0.80` into the bridges, with only `eth0.80` not isolated. The real watcher
+then put everything back within a second, and it removed the VLANs from the switch. No radio
+moved.
+
+### The first cable took the mesh down
+
+A satellite two wireless hops out was plugged into a managed switch, on a port set up like the
+main unit's. The satellite bridged the cable and its wireless uplink at once. The switch saw
+its own spanning tree frames come back through the mesh, and BPDU guard shut the port of the
+main unit. From then on the whole mesh reached the wired network through the satellite's
+cable. The satellite never changed to Ethernet backhaul, because it could not see the main
+unit on the wire. Both VLANs were cut off everywhere, since the main unit's uplink was dead.
+
+With BPDU guard off and spanning tree still on, the switch kept one of the two ports blocked
+for as long as the loop existed. It chose the main unit's port. TP-Link's support says that a
+Deco makes a loop for one or two seconds while it changes to Ethernet backhaul, and asks for
+loop detection to be off on the Decos' ports.
+
+### With loop protection off
+
+Spanning tree and BPDU guard were switched off on the Decos' ports, and storm control was
+switched on there instead. Then the satellite's port was brought up again.
+
+| Seconds after link up | What happened |
+|---|---|
+| 9 | `/tmp/eth_runtime_info` read `{"status":1}`. `hyctl` listed `eth1.4` as `norelay` with `bcast enable` and the wireless uplink with `bcast disable`. |
+| 10 | deco-vlan had taken the radio out of both bridges, created both VLANs in the switch for port 4 and the CPU port, and attached `eth1.70` and `eth1.80`. |
+| 24 | The radios towards the parent were gone from `hyctl`. |
+
+The router answered over both VLANs from the satellite. In the guest bridge only `eth1.80` was
+not isolated. The switch counted no storm. A client on another Deco lost its connection twice
+during the change, for 2 and for 10 seconds. For some minutes after it, single units did not
+answer the client now and then.
 
 ## What was measured
 
@@ -276,13 +309,15 @@ tested, and extended to the guest network. What it does for the IoT network is u
 | Version 0.3.0 installed over 0.2.0 on the whole mesh | Every watcher took over what was there. None logged a change. |
 | Version 0.3.0: uplink VLAN interface of a satellite deleted by hand | It was back within 2 s. |
 | Version 0.3.0: 6 GHz uplink of a satellite taken down, then brought back | The VLANs moved to the 2.4 GHz uplink within 3 s, and back within 3 s of the link returning. |
+| Version 0.3.0: satellite plugged into a switch with loop protection off | Both VLANs were on the cable 10 s after the link came up, and the router answered over both. |
 
 ## Not done
 
 - The main unit has not been rebooted with deco-vlan installed.
 - No firmware update has been applied with deco-vlan installed.
-- No satellite has been on a real cable. It is not known what the firmware does with the
-  wireless links then, nor whether the gateway is always seen behind the Ethernet port.
+- The cable of a wired satellite has not been pulled out again.
+- Guests on two wired Decos have not been tested against each other. They meet in the switch,
+  where the Decos cannot keep them apart.
 - A Deco plugged into another Deco is not handled. The upstream Deco would have to let the
   VLANs through to that port.
 - Four parts of the guest network have not been tried. They are the 6 GHz radio, the bandwidth
