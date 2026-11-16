@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+      - run: uv run mypy
+      - run: shellcheck src/deco_vlan/payload/*.sh
+      - run: uv run pytest
+      - name: The built package contains the scripts for the Deco
+        run: |
+          uv build --wheel
+          unzip -l dist/*.whl | grep -q deco_vlan/payload/deco-vlan.sh
+          unzip -l dist/*.whl | grep -q deco_vlan/payload/boot.sh
