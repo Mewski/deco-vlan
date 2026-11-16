@@ -1,0 +1,21 @@
+
+ SSDK Init OK!
+[vid]:1     [fid]:1      [member]:0x22  
+[tagged_member]:0x20    [untagged_member]:0x2     [unmodify_member]:0x0     [learn_dis]:disable  [pri_en]:disable [pri]:0x0   
+
+[vid]:2     [fid]:2      [member]:0x24  
+[tagged_member]:0x20    [untagged_member]:0x4     [unmodify_member]:0x0     [learn_dis]:disable  [pri_en]:disable [pri]:0x0   
+
+[vid]:3     [fid]:3      [member]:0x9   
+[tagged_member]:0x1     [untagged_member]:0x8     [unmodify_member]:0x0     [learn_dis]:disable  [pri_en]:disable [pri]:0x0   
+
+[vid]:4     [fid]:4      [member]:0x11  
+[tagged_member]:0x1     [untagged_member]:0x10    [unmodify_member]:0x0     [learn_dis]:disable  [pri_en]:disable [pri]:0x0   
+
+[vid]:70    [fid]:70     [member]:0x22  
+[tagged_member]:0x22    [untagged_member]:0x0     [unmodify_member]:0x0     [learn_dis]:disable  [pri_en]:disable [pri]:0x0   
+
+total 5 entries
+
+No more entry found  
+
