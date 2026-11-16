@@ -120,6 +120,9 @@ and port 4 as `eth1.4`, and those four are the bridge members. The switch works 
 mode. A frame that arrives with a tag is dropped unless that VLAN exists in the switch's table
 with the port as a member.
 
+`hyctl show` lists the four ports too, all of type `relay`. That is so on the main unit as
+well, where the gateway is behind one of them.
+
 ## What deco-vlan adds
 
 For each network that is given a VLAN ID, every unit gets three things.
@@ -127,7 +130,9 @@ For each network that is given a VLAN ID, every unit gets three things.
 - The network gets a bridge of its own, `br-iot` or `br-guest`. The bridge has no IP address and
   IPv6 is switched off, so the Deco itself is not a host in that network.
 - The network's radios move from `br-lan` into that bridge.
-- The backhaul radios get `<radio>.<VLAN>` sub-interfaces, which become members of the bridge.
+- The links to the rest of the mesh get the VLAN, and the tagged interfaces become members of
+  the bridge. A link is a backhaul radio, with `<radio>.<VLAN>`, or the Ethernet port a cable
+  is in.
 
 The picture shows the IoT network with VLAN 70. The guest network is the same with its own
 bridge and VLAN.
@@ -158,24 +163,38 @@ flowchart LR
 A unit adds the VLAN on all of its `relay` radios. Which band a child uses is the child's
 choice.
 
-### Towards the parent
+A child on a cable that is plugged into this unit, instead of into a switch, is not handled.
+The VLAN is not let through to that port, so the child's two networks have no path.
 
-A satellite adds the VLAN on one radio only, the one `hyctl` shows with `bcast enable`. This is
-the loop protection. The new bridges are plain Linux bridges without `hyfi_bridging`, so they
-must never have two paths to the same neighbour. With one uplink per unit the bridges of the
-mesh form a tree. When the mesh changes its uplink, deco-vlan moves the VLAN to the new radio.
-In a test the 6 GHz link of a satellite was taken down, the mesh switched to 2.4 GHz, and the
-IoT VLAN followed within 3 seconds. The same happened on the way back.
+### The uplink
 
-If no uplink is marked, the satellite has no member towards the parent. The radios stay in
-their bridges and the devices on them have no network until an uplink returns.
+Every unit has exactly one uplink per network. This is the loop protection. The new bridges
+are plain Linux bridges without `hyfi_bridging`, so they must never have two paths to the same
+neighbour. With one uplink per unit the bridges of the mesh form a tree.
 
-### On the main unit
+A satellite on wireless backhaul uses the radio `hyctl` shows as `norelay` with `bcast enable`.
+When the mesh changes its uplink, deco-vlan moves the VLAN to the new radio, and it takes the
+old member out before it puts the new one in. In a test the 6 GHz link of a satellite was
+taken down, the mesh switched to 2.4 GHz, and the IoT VLAN followed within 3 seconds. The same
+happened on the way back.
 
-The path leaves through Ethernet. deco-vlan finds the port behind which the default gateway's
-MAC address was learned. An example is `eth0.1`, which is switch port 1 behind CPU port 5.
-deco-vlan creates the VLAN in the switch with those two ports as tagged members, and it adds
-`eth0.<VLAN>` to the bridge. These commands do the same by hand.
+A unit without such a radio is on a cable. The main unit always is, and a satellite is for as
+long as it is plugged in. Its uplink is the Ethernet port behind which the default gateway's
+MAC address was learned in `br-lan`. When the cable comes out and the satellite is back on a
+radio, the VLAN follows in the same way.
+
+The firmware's mesh daemon picks one broadcast port among the parent-facing links, and its
+messages suggest that a cable can become such a link. If `hyctl` lists an Ethernet port as
+`norelay` with `bcast enable`, deco-vlan takes it as the uplink. No capture of that exists yet.
+
+While no uplink is known, the members stay as they are. The radios stay in their bridges and
+the devices on them have no network until an uplink returns.
+
+### Through the Ethernet switch
+
+An uplink on an Ethernet port needs the VLAN in the built-in switch. Take `eth0.1`, which is
+switch port 1 behind CPU port 5. deco-vlan creates the VLAN in the switch with those two ports
+as tagged members, and it adds `eth0.<VLAN>` to the bridge. These commands do the same by hand.
 
     ssdk_sh vlan entry create 70
     ssdk_sh vlan member add 70 1 tagged
@@ -183,7 +202,8 @@ deco-vlan creates the VLAN in the switch with those two ports as tagged members,
     vconfig add eth0 70
     brctl addif br-iot eth0.70
 
-Port numbers are read from the switch's own table.
+Port numbers are read from the switch's own table. When the uplink moves to a radio, the VLAN
+is removed from the switch again.
 
 ### Clients
 
@@ -207,6 +227,11 @@ The flag follows `wifi.guest.host_isolation`. With "Allow Local Access" switched
 no port of `br-guest` is isolated. The members of `br-iot` are never isolated, since IoT devices
 commonly need to reach each other.
 
+All of this happens inside the Decos. Two Decos on cables meet in the switch they are plugged
+into, and so do their guests. A frame from a guest on one Deco reaches the other through its
+uplink port, which is not isolated. If guests on different wired Decos must be kept apart, the
+switch has to do it for the guest VLAN.
+
 ## Keeping it in place
 
 The stock firmware does not know about any of this and undoes it now and then. A Wi-Fi reload
@@ -216,7 +241,8 @@ did not create and may reset the switch table.
 So the script does not configure once. It runs as a watcher (`deco-vlan.sh watch`) that makes
 one pass per second. A pass reads `hyctl` and files under `/sys`, and changes something only
 where the state is not the wanted one. The radios come first in every pass, before any uplink
-work. The main unit's uplink port and the switch table are looked at every 30 seconds. With both
+work. The Ethernet switch is looked at when the uplink changes and every 30 seconds, and so is
+the port a cable is in. If `hyctl` prints nothing, the last view of the links stands. With both
 networks the watcher used about 1 % of the CPU. A radio pushed back into `br-lan` by hand was
 out again in under 3 seconds.
 
@@ -229,7 +255,7 @@ watcher's version. One line per network follows. `deco-vlan status` reads that f
 uptime, which needs no command to be run on the unit. A unit that runs an older watcher than the
 installer shows up there.
 
-    version=0.2.0 pid=2167 uptime=1000.50 state=active role=RE mode=AP uplink=ath23
+    version=0.3.0 pid=2167 uptime=1000.50 state=active role=RE mode=AP uplink=ath23
     network=iot vlan=70 isolated=0 radios=ath08 members=ath02.70,ath08,ath12.70,ath22.70,ath23.70
     network=guest vlan=80 isolated=1 radios=ath01,ath11 members=ath01,ath02.80,ath11,ath23.80
 
@@ -284,11 +310,12 @@ they are likely to break.
 3. `crond` runs with `/etc/crontabs`.
 4. The radios of a network are the `wireless` UCI sections of type `iot`, `guest` and
    `owe_guest`, named like the interface.
-5. `hyctl show` lists the backhaul radios as `<radio>.<vlan>` with the columns shown above.
+5. `hyctl show` lists the backhaul radios as `<radio>.<vlan>` and the Ethernet ports as
+   `eth<n>.<port>`, with the columns shown above.
 6. `vconfig`, `brctl` and `hostapd_cli` exist, with control sockets in
    `/var/run/hostapd-<radio device>`. The kernel's bridge ports have the `isolated` flag, which
    needs Linux 4.18 or newer.
-7. On the main unit `ssdk_sh vlan entry show` prints `[vid]`, `[tagged_member]` and
+7. On a unit on a cable `ssdk_sh vlan entry show` prints `[vid]`, `[tagged_member]` and
    `[untagged_member]` masks, and each Ethernet port has its own VLAN towards the CPU.
 8. `/etc/config/firewall` supports `config include` and is saved by `saveconfig`, and
    `/tp_data/user_data` is writable.

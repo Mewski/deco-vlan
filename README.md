@@ -23,11 +23,14 @@ The installer refuses other models and firmware unless you tell it otherwise. Ot
 Qualcomm-based Decos are built the same way and may need little or no change. The architecture
 notes list [what it relies on](docs/architecture.md#what-it-relies-on).
 
+A satellite on a cable is handled like the main Deco, which always is on one. That path has
+been exercised on a satellite, but not yet with a cable plugged in.
+
 ## Requirements
 
 - The Decos run in access point mode.
-- The satellites reach the mesh over Wi-Fi. Wired backhaul is not supported yet.
-- The main Deco is on a switch port that carries your LAN untagged and the new VLANs tagged.
+- Every Deco on a cable is on a switch port that carries your LAN untagged and the new VLANs
+  tagged. The main Deco always is on a cable.
 - Your router serves those VLANs.
 - You have the TP-Link ID that owns the Decos. It is the only credential, and nothing works
   without it.
@@ -56,7 +59,7 @@ deco-vlan uninstall 192.168.1.20
 
 ```text
 Unit          Role    Device         Watcher  Uplink  IoT 70  Guest 80
-192.168.1.20  main    BE63 v2 1.3.5  active   eth0    ath08   ath01 ath11
+192.168.1.20  main    BE63 v2 1.3.5  active   eth0.1  ath08   ath01 ath11
 192.168.1.21  1 hop   BE63 v2 1.3.5  active   ath23   ath08   ath01 ath11
 192.168.1.22  2 hops  BE63 v2 1.3.5  active   ath23   ath08   ath01 ath11
 ```
@@ -85,12 +88,24 @@ quicker.
 
 `uninstall` puts all radios back into the LAN and removes everything from the Decos.
 
+### Cables
+
+A satellite can be on Wi-Fi or on a cable, and you can plug it in and unplug it at any time.
+Both networks follow the path the Deco uses. `status` shows that path in the Uplink column. It
+is a radio such as `ath23`, or an Ethernet port such as `eth0.1`, which is port 1.
+
+The switch port has to carry the VLANs tagged. On a port that carries only the LAN, the main
+network works and the other two have no connection.
+
 ### Guests
 
 Guests reach your router and nothing else. They cannot reach each other, whether they are on the
 same Deco or on different ones. The "Allow Local Access" switch in the guest settings of the
 Deco app changes this. When you switch it on, guests can reach each other inside the guest
 VLAN. What they reach beyond the VLAN is still up to your router.
+
+The Decos keep guests apart among themselves. Guests on two Decos that are both on cables
+meet in your switch, and there only the switch can keep them apart.
 
 ### Host keys
 
@@ -114,6 +129,7 @@ TP-Link closes the access, the Decos behave as stock and both networks are back 
 - `deco-vlan` delivers the networks on VLANs. What they may reach is decided by your router.
 - It does not tag the main network.
 - It does not give either network to the Ethernet ports of the Decos.
+- A Deco that is plugged into another Deco, instead of into a switch, gets neither network.
 - Devices on these networks can no longer be found from the LAN by broadcast or mDNS, unless
   your router relays mDNS between the networks.
 - If a Deco has no path upstream for a VLAN, the radios of that network stay out of the LAN. The

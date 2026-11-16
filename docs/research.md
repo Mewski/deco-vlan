@@ -228,6 +228,30 @@ The app's wireless settings are opcode `0x4009` to read and `0x4008` to write. T
 is the `guest` object of `band2_4` and `band5_1`, and its SSID and password are base64-encoded.
 Writing those objects back with `enable` set switched it on.
 
+## Satellites on a cable
+
+A satellite that is plugged into the wired network uses the cable as its backhaul. No satellite
+of this mesh was on a cable, so the stock side was read from the firmware.
+
+- `awnd` decides about the cable. Its messages speak of activating Ethernet backhaul and of
+  disconnecting the other backhauls, or keeping them. It writes `{"status":1}` to
+  `/tmp/eth_runtime_info`, which reads `{"status":0}` on every unit here.
+- `apsd` avoids loops in `br-lan`. Its messages speak of picking one broadcast port among the
+  ports that do not relay. `/etc/apsd.json` names the Ethernet ports next to the backhaul
+  radios.
+- `hyctl show` lists the four Ethernet ports as type `relay` on every unit, the main unit's
+  uplink port included. What it shows for a satellite on a cable is not known.
+
+The watcher therefore does not depend on how the firmware marks a cable. A unit whose mesh
+software broadcasts over a radio towards its parent is on wireless backhaul. Any other unit
+uses the Ethernet port behind which the gateway is, which is what the main unit always did.
+
+The Ethernet path was tried on a satellite without a cable. The watcher's code ran there with
+the gateway said to be behind `eth0.1`. It took the radio uplink out of both bridges, created
+both VLANs in the switch with port 1 and the CPU port as tagged members, and put `eth0.70` and
+`eth0.80` into the bridges, with only `eth0.80` not isolated. The real watcher then put
+everything back within a second, and it removed the VLANs from the switch. No radio moved.
+
 ## What was measured
 
 The first seven rows were measured with the IoT network alone, the first six on the earliest
@@ -249,15 +273,18 @@ tested, and extended to the guest network. What it does for the IoT network is u
 | The same probe on the IoT bridge, where ports are not isolated | IoT devices on other units answered. |
 | Guest VLAN taken away, then given back with another ID, then with the first | The radios went back to `br-lan` and the bridge was gone. Then the members and the switch entry existed for the new ID only. The IoT network was untouched each time. |
 | Watcher CPU use with both networks | It was about 1 % of the four cores, on the main unit and on a satellite. |
+| Version 0.3.0 installed over 0.2.0 on the whole mesh | Every watcher took over what was there. None logged a change. |
+| Version 0.3.0: uplink VLAN interface of a satellite deleted by hand | It was back within 2 s. |
+| Version 0.3.0: 6 GHz uplink of a satellite taken down, then brought back | The VLANs moved to the 2.4 GHz uplink within 3 s, and back within 3 s of the link returning. |
 
 ## Not done
 
 - The main unit has not been rebooted with deco-vlan installed.
 - No firmware update has been applied with deco-vlan installed.
-- Wired backhaul is not handled. The mesh device list has a field for it (`eth_backhual`), and
-  the installer refuses satellites that have it set. A satellite's Ethernet ports would need the
-  same treatment as the main unit's uplink, and the wired and wireless paths must not both be
-  bridged.
+- No satellite has been on a real cable. It is not known what the firmware does with the
+  wireless links then, nor whether the gateway is always seen behind the Ethernet port.
+- A Deco plugged into another Deco is not handled. The upstream Deco would have to let the
+  VLANs through to that port.
 - Four parts of the guest network have not been tried. They are the 6 GHz radio, the bandwidth
   limit, the captive portal some models offer, and "Allow Local Access" switched on.
 - `uninstall` has not been run since the guest network was added.
