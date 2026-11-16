@@ -58,6 +58,11 @@ def test_satellite_uses_the_one_uplink_the_mesh_broadcasts_on(run):
     assert out == "ath23| ath22 ath12 ath02"
 
 
+def test_satellite_on_a_cable_uses_the_port_the_mesh_broadcasts_on(run):
+    out = run('sort_backhaul; echo "$uplink|$children"', hyctl="hyctl-show-wired.txt")
+    assert out == "eth1.4| ath22 ath12 ath02"
+
+
 def test_main_unit_has_children_and_no_uplink_radio(run):
     out = run('sort_backhaul; echo "$uplink|$children"', hyctl="hyctl-show-main.txt")
     assert out == "| ath22 ath12 ath02"

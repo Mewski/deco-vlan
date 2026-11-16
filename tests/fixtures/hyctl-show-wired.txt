@@ -1,0 +1,15 @@
+
+br_name		br_mode	fw_mode	tcp_sp	follow_re	interfaces	iftype	type	grp_num	bcast	compat_type	class	path
+br-lan   	GRPREL	APS	disable	enable   	ath2     	6g	relay	1	enable	255		0	0
+							ath1     	5g	relay	1	enable	255		0	0
+							ath0     	2.4g	relay	1	enable	255		0	0
+							ath29    	6g	relay	1	enable	255		0	0
+							ath19    	5g	relay	1	enable	255		0	0
+							ath22.1  	6g	relay	1	enable	0		0	1
+							ath12.1  	5g	relay	1	enable	0		0	1
+							ath02.1  	2.4g	relay	1	enable	0		0	1
+							eth1.4   	eth	norelay	0	enable	1		0	1
+							eth1.3   	eth	relay	1	enable	4		0	1
+							eth0.2   	eth	relay	1	enable	3		0	1
+							eth0.1   	eth	relay	1	enable	2		0	1
+
