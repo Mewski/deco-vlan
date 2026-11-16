@@ -11,7 +11,8 @@
 #   - every radio of that network is a member of its bridge instead of br-lan;
 #   - the bridge reaches the rest of the mesh over the backhaul radios, tagged with the VLAN ID,
 #     the same way the stock firmware carries the LAN tagged with VLAN 1;
-#   - on the main unit the bridge reaches the wired network through the uplink port, tagged;
+#   - a unit on a cable, which the main unit always is, reaches the wired network through that
+#     Ethernet port, tagged;
 #   - guests can reach upstream and nothing else, unless the Deco app allows them local access.
 #
 # The stock firmware undoes parts of this whenever it reloads Wi-Fi or the network, so the
@@ -34,9 +35,13 @@ IOT_VLAN='' GUEST_VLAN='' VERSION=unknown
 [ -r "$SELF_DIR/config" ] && . "$SELF_DIR/config"
 
 # What the watcher knows about the unit, looked up now and then.
-TICK=0 ROLE='' MODE='' WIRED='' LAST=''
+TICK=0 ROLE='' MODE='' CABLE='' LAST=''
 IOT_RADIOS='' GUEST_RADIOS='' GUEST_ISOLATE=1
-children='' parents='' uplink=''
+
+# The links to the rest of the mesh. A link is a backhaul radio, e.g. "ath23", or an Ethernet
+# port, e.g. "eth0.1". The stock firmware gives every Ethernet port its own VLAN towards the CPU,
+# so the suffix is the number of the physical port.
+children='' uplink=''
 
 # The network the functions below work on, chosen with use().
 BR='' VID='' RADIOS='' ISOLATE=0
@@ -83,26 +88,28 @@ use() {
 # The backhaul radios as the mesh software sees them, one "<radio> <type> <broadcast>" per radio.
 backhaul() {
     hyctl show 2>/dev/null | awk '{
-        for (i = 1; i <= NF; i++) if ($i ~ /^ath[0-9]+\.[0-9]+$/) { sub(/\.[0-9]+$/, "", $i); print $i, $(i + 2), $(i + 4) }
+        for (i = 1; i <= NF; i++) if ($i ~ /^(ath|eth)[0-9]+\.[0-9]+$/) {
+            link = $i
+            if (link ~ /^ath/) sub(/\.[0-9]+$/, "", link)
+            print link, $(i + 2), $(i + 4)
+        }
     }'
 }
 
-# Sort the backhaul radios into $children, $parents and $uplink.
+# Sort the backhaul links into $children and $uplink.
 #
-# Type "relay" faces children, "norelay" faces the parent. Several parent-facing radios can be
-# associated at once; the mesh software sends broadcasts over exactly one of them, and that one
-# is the uplink.
+# Type "relay" faces children, "norelay" faces the parent. Several parent-facing links can be
+# up at once; the mesh software sends broadcasts over exactly one of them, and that one is the
+# uplink. An Ethernet port of type "relay" is an ordinary port for wired clients.
 sort_backhaul() {
-    children='' parents='' uplink=''
     # shellcheck disable=SC2046
     set -- $(backhaul)
+    [ $# -ge 3 ] || return 1
+    children='' uplink=''
     while [ $# -ge 3 ]; do
-        case $2 in
-            relay) children="$children $1" ;;
-            norelay)
-                parents="$parents $1"
-                [ "$3" = enable ] && [ -z "$uplink" ] && uplink=$1
-                ;;
+        case $2:$1 in
+            relay:ath*) children="$children $1" ;;
+            norelay:*) [ "$3" = enable ] && [ -z "$uplink" ] && uplink=$1 ;;
         esac
         shift 3
     done
@@ -126,9 +133,8 @@ port_of() {
     echo "$n"
 }
 
-# The main unit's wired uplink: the LAN bridge port behind which the default gateway is, e.g.
-# "eth0.1". The stock firmware gives every Ethernet port its own VLAN towards the CPU, so the
-# suffix identifies the physical port.
+# The Ethernet port towards the gateway: the LAN bridge port behind which the default gateway
+# is, e.g. "eth0.1".
 wired_uplink() {
     local gw mac no port
     gw=$(ip route | awk '$1 == "default" { print $3; exit }')
@@ -146,6 +152,25 @@ wired_uplink() {
     return 1
 }
 
+# Find $children and $uplink. Fails while the mesh software gives no answer, and leaves both
+# as they were.
+#
+# A unit without a parent-facing link that carries broadcasts is on a cable: the main unit
+# always, and a satellite whose mesh software does not list its cable as such a link.
+links() {
+    local port
+    sort_backhaul || return 1
+    if [ -n "$uplink" ]; then
+        CABLE=''
+        return 0
+    fi
+    # A cable rarely moves to another port: look every 30 s, and until it is found.
+    if [ -z "$CABLE" ] || [ $((TICK % 30)) = 1 ]; then
+        port=$(wired_uplink) && CABLE=$port
+    fi
+    uplink=$CABLE
+}
+
 # -------------------------------------------------- actions on the network chosen with use()
 
 bridge_up() {
@@ -159,9 +184,10 @@ bridge_up() {
     log "created $BR for VLAN $VID"
 }
 
-# Put <device>.<VID> into the bridge, creating it if needed.
+# Put a link into the bridge, tagged with the VLAN ID. The member is "ath23.70" for the radio
+# "ath23", and "eth0.70" for the Ethernet port "eth0.1".
 attach() {
-    local dev=$1 port=$1.$VID
+    local dev=${1%.*} port=${1%.*}.$VID
     exists "$dev" || return 1
     if ! exists "$port"; then
         vconfig add "$dev" "$VID" >/dev/null 2>&1 || return 1
@@ -174,11 +200,17 @@ attach() {
     is_up "$port" || ifconfig "$port" up
 }
 
-detach() {
-    local port=$1.$VID
-    exists "$port" || return 0
-    vconfig rem "$port" >/dev/null 2>&1
-    log "detached $port"
+# Take out the tagged members the bridge should not have: an earlier uplink, or one left over
+# from another VLAN ID.
+prune() {
+    local keep=" $1 " path port
+    for path in "/sys/class/net/$BR/brif"/*.*; do
+        [ -e "$path" ] || continue
+        port=${path##*/}
+        case $keep in *" $port "*) continue ;; esac
+        vconfig rem "$port" >/dev/null 2>&1
+        log "detached $port"
+    done
 }
 
 # Make the clients of a radio reconnect, so that they ask for an address in the network the
@@ -202,47 +234,42 @@ move() {
     log "moved $radio to $to"
 }
 
-# Main unit: let the VLAN through the Ethernet switch between the uplink port and the CPU, and
-# bridge it. The switch drops tagged frames whose VLAN it does not know. $2 says whether to
-# look at the switch in this pass.
-wired() {
-    local dev=${1%.*} vid=${1#*.} tagged untagged want
-    if [ "$2" = 1 ]; then
-        tagged=$(switch_members "$vid" tagged)
-        untagged=$(switch_members "$vid" untagged)
-        [ -n "$tagged" ] && [ -n "$untagged" ] || return 1
-        want=$(printf '0x%x' $((tagged | untagged)))
-        if [ "$(switch_members "$VID" tagged)" != "$want" ]; then
-            ssdk_sh vlan entry del "$VID" >/dev/null 2>&1
-            ssdk_sh vlan entry create "$VID" >/dev/null 2>&1
-            ssdk_sh vlan member add "$VID" "$(port_of "$untagged")" tagged >/dev/null 2>&1
-            ssdk_sh vlan member add "$VID" "$(port_of "$tagged")" tagged >/dev/null 2>&1
-            log "switch: VLAN $VID tagged on port $(port_of "$untagged") and CPU port $(port_of "$tagged")"
-        fi
-        [ -n "$WIRED" ] && [ "${WIRED%.*}" != "$dev" ] && detach "${WIRED%.*}"
+# Let the VLAN through the Ethernet switch for the uplink. The switch drops tagged frames whose
+# VLAN it does not know. With the uplink on an Ethernet port, the VLAN gets the two members
+# that port's own VLAN has, the port and the CPU, both tagged. With the uplink on a radio the
+# switch does not need the VLAN.
+switch_vlan() {
+    local tagged untagged have want=''
+    case $1 in
+        eth*)
+            tagged=$(switch_members "${1#*.}" tagged)
+            untagged=$(switch_members "${1#*.}" untagged)
+            [ -n "$tagged" ] && [ -n "$untagged" ] || return 1
+            want=$(printf '0x%x' $((tagged | untagged)))
+            ;;
+    esac
+    have=$(switch_members "$VID" tagged)
+    [ "$have" = "$want" ] && return 0
+    [ -n "$have" ] && ssdk_sh vlan entry del "$VID" >/dev/null 2>&1
+    if [ -z "$want" ]; then
+        log "switch: VLAN $VID removed"
+        return 0
     fi
-    attach "$dev"
+    ssdk_sh vlan entry create "$VID" >/dev/null 2>&1
+    ssdk_sh vlan member add "$VID" "$(port_of "$untagged")" tagged >/dev/null 2>&1
+    ssdk_sh vlan member add "$VID" "$(port_of "$tagged")" tagged >/dev/null 2>&1
+    log "switch: VLAN $VID tagged on port $(port_of "$untagged") and CPU port $(port_of "$tagged")"
 }
 
-# Go through the members of the bridge: drop those left over from another VLAN ID, and set the
-# isolation flag. The kernel does not forward between two isolated ports, so with every port
-# isolated except the uplink, a client reaches upstream and nothing else.
-tidy() {
-    local up=$1 path port want have
+# Set the isolation flag on every member. The kernel does not forward between two isolated
+# ports, so with every port isolated except the uplink, a client reaches upstream and nothing
+# else.
+isolate() {
+    local up=$1 path want have
     for path in "/sys/class/net/$BR/brif"/*; do
-        [ -e "$path" ] || continue
-        port=${path##*/}
-        case $port in
-            *."$VID") ;;
-            *.*)
-                vconfig rem "$port" >/dev/null 2>&1
-                log "dropped $port"
-                continue
-                ;;
-        esac
         [ -e "$path/isolated" ] || continue
         want=$ISOLATE
-        [ "$port" = "$up" ] && want=0
+        [ "${path##*/}" = "$up" ] && want=0
         read -r have <"$path/isolated"
         [ "$have" = "$want" ] || echo "$want" >"$path/isolated"
     done
@@ -265,15 +292,14 @@ release() {
         brctl delbr "$BR"
         log "removed $BR"
     fi
-    [ "$ROLE" = FAP ] && [ -n "$VID" ] && [ -n "$(switch_members "$VID" tagged)" ] &&
-        ssdk_sh vlan entry del "$VID" >/dev/null 2>&1
+    [ -n "$VID" ] && switch_vlan ''
 }
 
 # ------------------------------------------------------------------------ the watcher
 
 # One pass: bring the unit to the wanted state. Cheap when nothing has changed.
 ensure() {
-    local network radio eth='' check=0
+    local network radio link want look=0 last=$uplink
     TICK=$((TICK + 1))
     # Every 30 s, and every second while the unit is still starting.
     if [ -z "$ROLE" ] || [ -z "$IOT_RADIOS$GUEST_RADIOS" ] || [ $((TICK % 30)) = 1 ]; then
@@ -289,18 +315,9 @@ ensure() {
         return
     fi
 
-    children='' parents='' uplink=''
-    if [ -n "$ROLE" ]; then
-        sort_backhaul
-        if [ "$ROLE" = FAP ]; then
-            # The cable rarely moves to another port: look every 30 s, and until it is found.
-            eth=$WIRED
-            if [ -z "$WIRED" ] || [ $((TICK % 30)) = 1 ]; then
-                eth=$(wired_uplink) || eth=$WIRED
-                check=1
-            fi
-            uplink=${eth%.*}
-        fi
+    if [ -n "$ROLE" ] && links; then
+        # The Ethernet switch is looked at when the uplink has changed, and every 30 s.
+        if [ "$uplink" != "$last" ] || [ $((TICK % 30)) = 1 ]; then look=1; fi
     fi
 
     for network in $NETWORKS; do
@@ -312,17 +329,18 @@ ensure() {
         bridge_up || continue
         # Isolation first: the radios leave the LAN even while there is no path upstream.
         for radio in $RADIOS; do move "$radio" $LAN "$BR"; done
-        if [ "$ROLE" = FAP ]; then
-            [ -n "$eth" ] && wired "$eth" $check
-        else
-            # Exactly one path towards the parent, or the parallel links would form a loop.
-            for radio in $parents; do [ "$radio" = "$uplink" ] || detach "$radio"; done
-            [ -n "$uplink" ] && attach "$uplink"
+        if [ -n "$uplink" ]; then
+            # One path upstream at any moment, or two would form a loop: what the bridge
+            # should not have goes before the uplink comes.
+            want=''
+            for link in $children $uplink; do want="$want ${link%.*}.$VID"; done
+            prune "$want"
+            [ $look = 1 ] && switch_vlan "$uplink"
+            attach "$uplink"
         fi
-        for radio in $children; do attach "$radio"; done
-        tidy "${uplink:+$uplink.$VID}"
+        for link in $children; do attach "$link"; done
+        isolate "${uplink:+${uplink%.*}.$VID}"
     done
-    [ -n "$eth" ] && WIRED=$eth
     report "${ROLE:+active}"
 }
 

@@ -279,11 +279,12 @@ def vlan_ids(states: list[Status], name: str) -> str:
 
 
 def role(unit: Unit) -> str:
-    """Say where the unit sits in the mesh: the main unit, or so many wireless hops from it."""
+    """Say where the unit sits in the mesh: main, on a cable, or so many wireless hops out."""
     if unit.main:
         return "main"
-    text = f"{unit.level} hop{'' if unit.level == 1 else 's'}"
-    return text + (" [yellow](wired)[/]" if unit.wired_backhaul else "")
+    if unit.wired_backhaul:
+        return "wired"
+    return f"{unit.level} hop{'' if unit.level == 1 else 's'}"
 
 
 def uplink(state: Status) -> str:

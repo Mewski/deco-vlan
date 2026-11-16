@@ -38,7 +38,7 @@ def run(tmp_path):
     return run
 
 
-def test_backhaul_radios_of_a_satellite(run):
+def test_backhaul_links_of_a_satellite(run):
     assert run("backhaul", hyctl="hyctl-show-satellite.txt").splitlines() == [
         "ath23 norelay enable",
         "ath22 relay enable",
@@ -46,21 +46,46 @@ def test_backhaul_radios_of_a_satellite(run):
         "ath03 norelay disable",
         "ath12 relay enable",
         "ath02 relay enable",
+        "eth1.4 relay enable",
+        "eth1.3 relay enable",
+        "eth0.2 relay enable",
+        "eth0.1 relay enable",
     ]
 
 
 def test_satellite_uses_the_one_uplink_the_mesh_broadcasts_on(run):
-    out = run('sort_backhaul; echo "$uplink|$parents|$children"', hyctl="hyctl-show-satellite.txt")
-    assert out == "ath23| ath23 ath13 ath03| ath22 ath12 ath02"
+    out = run('sort_backhaul; echo "$uplink|$children"', hyctl="hyctl-show-satellite.txt")
+    assert out == "ath23| ath22 ath12 ath02"
 
 
 def test_main_unit_has_children_and_no_uplink_radio(run):
-    out = run('sort_backhaul; echo "$uplink|$parents|$children"', hyctl="hyctl-show-main.txt")
-    assert out == "|| ath22 ath12 ath02"
+    out = run('sort_backhaul; echo "$uplink|$children"', hyctl="hyctl-show-main.txt")
+    assert out == "| ath22 ath12 ath02"
 
 
-def test_no_backhaul_when_the_mesh_tool_prints_nothing(run):
-    assert run('hyctl() { :; }; sort_backhaul; echo "[$uplink][$parents][$children]"') == "[][][]"
+def test_last_view_stands_when_the_mesh_tool_prints_nothing(run):
+    code = 'hyctl() { :; }; children=" ath22" uplink=ath23; links || echo "$uplink|$children"'
+    assert run(code) == "ath23| ath22"
+
+
+def test_satellite_on_a_radio_forgets_its_cable(run):
+    out = run('CABLE=eth0.1; links; echo "$uplink|$CABLE"', hyctl="hyctl-show-satellite.txt")
+    assert out == "ath23|"
+
+
+def test_unit_without_an_uplink_radio_uses_the_port_towards_the_gateway(run):
+    code = 'wired_uplink() { echo eth0.1; }; links; echo "$uplink"'
+    assert run(code, hyctl="hyctl-show-main.txt") == "eth0.1"
+
+
+def test_cable_stays_known_while_the_gateway_is_not_seen(run):
+    code = 'wired_uplink() { return 1; }; CABLE=eth0.1 TICK=1; links; echo "$uplink"'
+    assert run(code, hyctl="hyctl-show-main.txt") == "eth0.1"
+
+
+def test_no_uplink_without_a_radio_or_a_cable(run):
+    code = 'wired_uplink() { return 1; }; links; echo "[$uplink]"'
+    assert run(code, hyctl="hyctl-show-main.txt") == "[]"
 
 
 @pytest.mark.parametrize(

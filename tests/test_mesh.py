@@ -55,9 +55,10 @@ def test_discover_can_be_limited():
     assert [u.ip for u in units] == ["192.168.1.20"]
 
 
-def test_healthy_mesh_has_only_the_wired_satellite_as_problem():
+def test_healthy_mesh_has_no_problems_with_a_wired_satellite_in_it():
     units = mesh.discover("192.168.1.20", FakeDeco)
-    assert [(p.unit.ip, p.fatal) for p in mesh.problems(units)] == [("192.168.1.22", False)]
+    assert [u.wired_backhaul for u in units] == [False, True, False]
+    assert mesh.problems(units) == []
 
 
 def test_router_mode_is_a_fatal_problem():
@@ -95,6 +96,13 @@ def test_status_per_network():
     assert (guest.vlan, guest.isolated, guest.radios) == (80, True, ("ath01", "ath11"))
     assert iot.connected
     assert guest.connected
+
+
+def test_unit_on_a_cable_is_connected_through_its_ethernet_port():
+    text = STATUS.replace("uplink=ath23", "uplink=eth0.1").replace("ath23.", "eth0.")
+    status = Status.parse(text, uptime=1010.0)
+    assert status.uplink == "eth0.1"
+    assert status.ready
 
 
 def test_status_goes_stale_when_the_watcher_stops_writing():

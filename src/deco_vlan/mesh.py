@@ -42,7 +42,8 @@ class Network:
     @property
     def connected(self) -> bool:
         """The bridge has a path upstream."""
-        return f"{self.uplink}.{self.vlan}" in self.members
+        device = self.uplink.partition(".")[0]  # "eth0.1" is port 1 of the switch behind eth0
+        return f"{device}.{self.vlan}" in self.members
 
 
 @dataclass(frozen=True)
@@ -186,9 +187,6 @@ def problems(units: Iterable[Unit]) -> list[Problem]:
             found.append(Problem(unit, "not in access point mode", fatal=True))
         if not unit.tested:
             text = f"{unit.model} v{unit.hardware} with firmware {unit.firmware} is untested"
-            found.append(Problem(unit, text, fatal=False))
-        if unit.wired_backhaul and not unit.main:
-            text = "wired backhaul is not supported; its networks would be cut off"
             found.append(Problem(unit, text, fatal=False))
     return found
 
