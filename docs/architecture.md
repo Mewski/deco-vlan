@@ -233,10 +233,22 @@ The flag follows `wifi.guest.host_isolation`. With "Allow Local Access" switched
 no port of `br-guest` is isolated. The members of `br-iot` are never isolated, since IoT devices
 commonly need to reach each other.
 
-All of this happens inside the Decos. Two Decos on cables meet in the switch they are plugged
-into, and so do their guests. A frame from a guest on one Deco reaches the other through its
-uplink port, which is not isolated. If guests on different wired Decos must be kept apart, the
-switch has to do it for the guest VLAN.
+The flag keeps the ports of one Deco apart. It is not enough for two Decos on cables. They
+meet in the switch they are plugged into, and a frame from a guest on one Deco reaches the
+other through its uplink, the same way the router's frames do. So on the uplink of `br-guest`
+a filter drops every frame the router did not send. It is a `tc` ingress filter with two
+rules. One passes frames whose source address is the router's, and one drops the rest.
+
+    tc qdisc add dev eth0.80 handle ffff: ingress
+    tc filter add dev eth0.80 parent ffff: prio 1 protocol all u32 \
+        match u32 0xa4f8ff1e 0xffffffff at -8 match u16 0xae60 0xffff at -4 action ok
+    tc filter add dev eth0.80 parent ffff: prio 2 protocol all u32 match u32 0 0 at 0 action drop
+
+The router's address comes from `/proc/hyfi_filter/gw_mac`, where the stock firmware keeps it
+for its own guest filter. The filter is put in only once that address has been learned behind
+the uplink in `br-guest`. A network whose router uses another address there keeps working, at
+the price that guests on two wired Decos can reach each other. The filter follows the uplink
+and the "Allow Local Access" switch, and it is checked every 5 seconds.
 
 ## Keeping it in place
 
@@ -247,10 +259,10 @@ did not create and may reset the switch table.
 So the script does not configure once. It runs as a watcher (`deco-vlan.sh watch`) that makes
 one pass per second. A pass reads `hyctl` and files under `/sys`, and changes something only
 where the state is not the wanted one. The radios come first in every pass, before any uplink
-work. The Ethernet switch is looked at when the uplink changes and every 30 seconds, and so is
-the port a cable is in. If `hyctl` prints nothing, the last view of the links stands. With both
-networks the watcher used about 1 % of the CPU. A radio pushed back into `br-lan` by hand was
-out again in under 3 seconds.
+work. The Ethernet switch is looked at when the uplink changes and every 5 seconds, and the
+port a cable is in every 30. If `hyctl` prints nothing, the last view of the links stands.
+With both networks the watcher used about 1 % of the CPU. A radio pushed back into `br-lan` by
+hand was out again in under 3 seconds.
 
 A network that is switched off has no radios. Its bridge and VLAN are kept ready, and the radios
 are claimed in the first pass in which they exist.
@@ -320,7 +332,8 @@ they are likely to break.
    `eth<n>.<port>`, with the columns shown above.
 6. `vconfig`, `brctl` and `hostapd_cli` exist, with control sockets in
    `/var/run/hostapd-<radio device>`. The kernel's bridge ports have the `isolated` flag, which
-   needs Linux 4.18 or newer.
+   needs Linux 4.18 or newer. `tc` has the ingress queue and the `u32` filter, and
+   `/proc/hyfi_filter/gw_mac` holds the router's address.
 7. On a unit on a cable `ssdk_sh vlan entry show` prints `[vid]`, `[tagged_member]` and
    `[untagged_member]` masks, and each Ethernet port has its own VLAN towards the CPU.
 8. `/etc/config/firewall` supports `config include` and is saved by `saveconfig`, and

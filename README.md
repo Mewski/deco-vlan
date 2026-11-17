@@ -109,8 +109,9 @@ same Deco or on different ones. The "Allow Local Access" switch in the guest set
 Deco app changes this. When you switch it on, guests can reach each other inside the guest
 VLAN. What they reach beyond the VLAN is still up to your router.
 
-The Decos keep guests apart among themselves. Guests on two Decos that are both on cables
-meet in your switch, and there only the switch can keep them apart.
+This holds for Decos on cables too, where guests would otherwise meet in your switch. Each Deco
+lets in from upstream only what the router sent. For that the router has to use the same MAC
+address in the guest network as in your LAN, which a router that serves both normally does.
 
 ### Host keys
 

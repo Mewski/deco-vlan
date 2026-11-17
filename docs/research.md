@@ -228,6 +228,21 @@ The app's wireless settings are opcode `0x4009` to read and `0x4008` to write. T
 is the `guest` object of `band2_4` and `band5_1`, and its SSID and password are base64-encoded.
 Writing those objects back with `enable` set switched it on.
 
+### Guests on two Decos on cables
+
+With one Deco on a cable, every guest frame passes that Deco's bridge on its way up, and the
+isolated ports are enough. With a second Deco on a cable, guests of the two meet in the switch.
+A stand-in guest on the main unit asked for the address of a stand-in guest on the wired
+satellite and got an answer.
+
+The stock firmware confines guests by address, not by port. It keeps the router's MAC address
+in `/proc/hyfi_filter/gw_mac`, and the file holds it on every unit, in access point mode too.
+`ebtables` is on the units, but the kernel has no filter table for it. `tc` has the ingress
+queue and the `u32` filter, and a filter on the uplink of the guest bridge that passes only
+the router's frames stopped the answer in both directions. The router still answered. A real
+client on the guest network of a third unit got its address, DNS and the internet over IPv4
+and IPv6, and heard neither stand-in.
+
 ## Satellites on a cable
 
 A satellite that is plugged into the wired network uses the cable as its backhaul. The stock
@@ -310,14 +325,14 @@ tested, and extended to the guest network. What it does for the IoT network is u
 | Version 0.3.0: uplink VLAN interface of a satellite deleted by hand | It was back within 2 s. |
 | Version 0.3.0: 6 GHz uplink of a satellite taken down, then brought back | The VLANs moved to the 2.4 GHz uplink within 3 s, and back within 3 s of the link returning. |
 | Version 0.3.0: satellite plugged into a switch with loop protection off | Both VLANs were on the cable 10 s after the link came up, and the router answered over both. |
+| Version 0.3.1: guests on the main unit and on the wired satellite | Neither heard the other. Both heard the router. |
+| Version 0.3.1: switch entry of a VLAN deleted by hand on the wired satellite | It was back within 5 s. |
 
 ## Not done
 
 - The main unit has not been rebooted with deco-vlan installed.
 - No firmware update has been applied with deco-vlan installed.
 - The cable of a wired satellite has not been pulled out again.
-- Guests on two wired Decos have not been tested against each other. They meet in the switch,
-  where the Decos cannot keep them apart.
 - A Deco plugged into another Deco is not handled. The upstream Deco would have to let the
   VLANs through to that port.
 - Four parts of the guest network have not been tried. They are the 6 GHz radio, the bandwidth
