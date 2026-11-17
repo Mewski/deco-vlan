@@ -104,7 +104,53 @@ def test_no_uplink_without_a_radio_or_a_cable(run):
     ],
 )
 def test_switch_members(run, vlan, kind, mask):
-    assert run(f"switch_members {vlan} {kind}", ssdk_sh="ssdk-vlan-entry-show.txt") == mask
+    code = f"ssdk_sh vlan entry show | switch_members {vlan} {kind}"
+    assert run(code, ssdk_sh="ssdk-vlan-entry-show.txt") == mask
+
+
+GUARD = """
+ROUTER="{router}" BR=br-guest ISOLATE={isolate}
+log() {{ :; }}
+cat() {{ echo 0x3; }}
+brctl() {{ printf '  {port}\\ta4:f8:ff:1e:ae:60\\tno\\t   0.11\\n'; }}
+tc() {{ case "$1 $2" in "filter show") {shown} ;; "qdisc del") return 1 ;; *) echo "$*" ;; esac; }}
+guard eth1.80
+"""
+
+
+@pytest.fixture
+def guard(run, tmp_path):
+    """Run the filter for guests on an uplink that is bridge port 3, with tc recorded."""
+    router = tmp_path / "gw_mac"
+    router.write_text("A4:F8:FF:1E:AE:60\n")
+
+    def guard(isolate=1, port=3, shown=":"):
+        code = GUARD.format(router=router, isolate=isolate, port=port, shown=shown)
+        return run(code).splitlines()
+
+    return guard
+
+
+def test_isolated_network_hears_only_the_router_through_its_uplink(guard):
+    rule = "filter add dev eth1.80 parent ffff: prio {} protocol all u32 match {}"
+    assert guard() == [
+        "qdisc add dev eth1.80 handle ffff: ingress",
+        rule.format(1, "u32 0xa4f8ff1e 0xffffffff at -8 match u16 0xae60 0xffff at -4 action ok"),
+        rule.format(2, "u32 0 0 at 0 action drop"),
+    ]
+
+
+def test_no_filter_until_the_router_is_heard_through_the_uplink(guard):
+    assert guard(port=5) == []
+
+
+def test_no_filter_for_a_network_that_is_not_isolated(guard):
+    assert guard(isolate=0) == []
+
+
+def test_filter_that_is_in_place_is_left_alone(guard):
+    shown = "echo 'match a4f8ff1e/ffffffff at -8'; echo 'match ae600000/ffff0000 at -4'"
+    assert guard(shown=shown) == []
 
 
 @pytest.mark.parametrize(("mask", "port"), [("0x2", "1"), ("0x20", "5"), ("0x1", "0")])

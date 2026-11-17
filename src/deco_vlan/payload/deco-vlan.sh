@@ -13,7 +13,7 @@
 #     the same way the stock firmware carries the LAN tagged with VLAN 1;
 #   - a unit on a cable, which the main unit always is, reaches the wired network through that
 #     Ethernet port, tagged;
-#   - guests can reach upstream and nothing else, unless the Deco app allows them local access.
+#   - guests can reach the router and nothing else, unless the Deco app allows them local access.
 #
 # The stock firmware undoes parts of this whenever it reloads Wi-Fi or the network, so the
 # script runs as a watcher and repairs the state once a second. Nothing here writes to flash
@@ -26,6 +26,7 @@ INSTALL_DIR=/tp_data/user_data/deco-vlan
 PIDFILE=/var/run/deco-vlan.pid
 STATUS=/tmp/deco-vlan.status
 WORK_MODE=/tmp/work_mode
+ROUTER=/proc/hyfi_filter/gw_mac
 LAN=br-lan
 NETWORKS='iot guest'
 
@@ -115,9 +116,10 @@ sort_backhaul() {
     done
 }
 
-# Tagged or untagged member mask of a VLAN in the Ethernet switch, e.g. "0x20". Empty if absent.
+# Tagged or untagged member mask of a VLAN, e.g. "0x20", from the VLAN table of the Ethernet
+# switch on standard input. Empty if the VLAN is absent.
 switch_members() {
-    ssdk_sh vlan entry show 2>/dev/null | awk -v v="[vid]:$1" -v k="[$2_member]:" '
+    awk -v v="[vid]:$1" -v k="[$2_member]:" '
         $1 == v { found = 1; next }
         found { for (i = 1; i <= NF; i++) if (index($i, k) == 1) { print substr($i, length(k) + 1); exit } }'
 }
@@ -239,16 +241,17 @@ move() {
 # that port's own VLAN has, the port and the CPU, both tagged. With the uplink on a radio the
 # switch does not need the VLAN.
 switch_vlan() {
-    local tagged untagged have want=''
+    local table tagged untagged have want=''
+    table=$(ssdk_sh vlan entry show 2>/dev/null)
     case $1 in
         eth*)
-            tagged=$(switch_members "${1#*.}" tagged)
-            untagged=$(switch_members "${1#*.}" untagged)
+            tagged=$(echo "$table" | switch_members "${1#*.}" tagged)
+            untagged=$(echo "$table" | switch_members "${1#*.}" untagged)
             [ -n "$tagged" ] && [ -n "$untagged" ] || return 1
             want=$(printf '0x%x' $((tagged | untagged)))
             ;;
     esac
-    have=$(switch_members "$VID" tagged)
+    have=$(echo "$table" | switch_members "$VID" tagged)
     [ "$have" = "$want" ] && return 0
     [ -n "$have" ] && ssdk_sh vlan entry del "$VID" >/dev/null 2>&1
     if [ -z "$want" ]; then
@@ -273,6 +276,41 @@ isolate() {
         read -r have <"$path/isolated"
         [ "$have" = "$want" ] || echo "$want" >"$path/isolated"
     done
+}
+
+# Let an isolated network hear the router and nothing else through its uplink.
+#
+# The isolation flag keeps the ports of one Deco apart. It cannot keep the guests of two Decos
+# apart that are both on a cable. They meet in the switch, and what comes from there enters
+# through the uplink, as the router's frames do. So a filter on the uplink drops every frame
+# the router did not send. The stock firmware confines its guests to the router as well, and
+# keeps the router's MAC address in $ROUTER.
+#
+# The filter goes in once the router has been heard in this network with that address, so
+# that a network whose router has another address keeps working.
+guard() {
+    local up=$1 mac='' key no
+    [ "$ISOLATE" = 1 ] && mac=$(tr 'A-F' 'a-f' 2>/dev/null <$ROUTER)
+    key=$(echo "$mac" | tr -d ':')
+    [ ${#key} = 12 ] || key=''
+    if [ -n "$key" ] && [ "$(tc filter show dev "$up" parent ffff: 2>/dev/null |
+        grep -c -e "match ${key%????}/ffffffff at -8" -e "match ${key#????????}0000/ffff0000 at -4")" = 2 ]; then
+        return 0
+    fi
+    tc qdisc del dev "$up" ingress 2>/dev/null && log "$BR hears everything through $up"
+    [ -n "$key" ] || return 0
+    no=$(($(cat "/sys/class/net/$up/brport/port_no")))
+    brctl showmacs "$BR" | awk -v n="$no" -v m="$mac" '$1 == n && $2 == m { heard = 1 } END { exit !heard }' ||
+        return 0
+    tc qdisc add dev "$up" handle ffff: ingress || return 1
+    # The source address is the six bytes that end two bytes before the payload.
+    if ! tc filter add dev "$up" parent ffff: prio 1 protocol all u32 \
+        match u32 "0x${key%????}" 0xffffffff at -8 match u16 "0x${key#????????}" 0xffff at -4 action ok; then
+        tc qdisc del dev "$up" ingress
+        return 1
+    fi
+    tc filter add dev "$up" parent ffff: prio 2 protocol all u32 match u32 0 0 at 0 action drop
+    log "$BR hears only the router, $mac, through $up"
 }
 
 # Undo everything for one network. Its radios go back into the LAN bridge.
@@ -316,8 +354,9 @@ ensure() {
     fi
 
     if [ -n "$ROLE" ] && links; then
-        # The Ethernet switch is looked at when the uplink has changed, and every 30 s.
-        if [ "$uplink" != "$last" ] || [ $((TICK % 30)) = 1 ]; then look=1; fi
+        # The Ethernet switch and the filter for guests are looked at when the uplink has
+        # changed, and every 5 s.
+        if [ "$uplink" != "$last" ] || [ $((TICK % 5)) = 1 ]; then look=1; fi
     fi
 
     for network in $NETWORKS; do
@@ -340,6 +379,7 @@ ensure() {
         fi
         for link in $children; do attach "$link"; done
         isolate "${uplink:+${uplink%.*}.$VID}"
+        [ $look = 1 ] && [ -n "$uplink" ] && guard "${uplink%.*}.$VID"
     done
     report "${ROLE:+active}"
 }
