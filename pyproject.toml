@@ -1,6 +1,6 @@
 [project]
 name = "deco-vlan"
-version = "0.3.0"
+version = "0.3.1"
 description = "Put the IoT and guest Wi-Fi networks of a TP-Link Deco mesh on their own VLANs in access point mode"
 readme = "README.md"
 license = "Unlicense"
